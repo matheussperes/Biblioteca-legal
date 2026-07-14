@@ -1,0 +1,308 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector]
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline / Documento
+// ---------------------------------------------------------------------------
+
+enum DocumentType {
+  PDF
+  DOCX
+  TXT
+  HTML
+  MARKDOWN
+  PASTED
+}
+
+enum PipelineStatus {
+  UPLOADED
+  EXTRACTED
+  CLEANED
+  TOKENIZED
+  PARSED
+  TREE_CREATED
+  CHUNKED
+  ENRICHED
+  EMBEDDED
+  INDEXED
+}
+
+model Document {
+  id              String         @id @default(cuid())
+  name            String
+  type            DocumentType
+  mimeType        String?
+  sizeBytes       Int            @default(0)
+  originalContent Bytes? // arquivo original (PDF/DOCX/...)
+  pastedText      String? // texto colado diretamente
+  status          PipelineStatus @default(UPLOADED)
+
+  // Artefatos intermediários — persistidos para reprocessamento incremental
+  extractedText  String?
+  cleanedText    String?
+  structureJson  Json? // Step 5 — JSON definitivo da lei
+  extractionMeta Json?
+  cleaningStats  Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tokens     Token[]
+  chapters   Chapter[]
+  sections   Section[]
+  articles   Article[]
+  paragraphs Paragraph[]
+  incisos    Inciso[]
+  alineas    Alinea[]
+  chunks     Chunk[]
+  embeddings Embedding[]
+  logs       PipelineLog[]
+  jobs       ProcessingJob[]
+
+  @@map("documents")
+}
+
+// ---------------------------------------------------------------------------
+// Step 3 — Tokens Estruturais
+// ---------------------------------------------------------------------------
+
+model Token {
+  id         String   @id @default(cuid())
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  index      Int // ordem do token no documento
+  type       String // DOCUMENT | CAPITULO | ... | TEXTO
+  text       String
+  position   Int // offset de caracteres no texto limpo
+  startLine  Int
+  endLine    Int
+
+  @@index([documentId, index])
+  @@index([documentId, type])
+  @@map("tokens")
+}
+
+// ---------------------------------------------------------------------------
+// Steps 4/5 — Estrutura hierárquica da lei
+// ---------------------------------------------------------------------------
+
+model Chapter {
+  id         String    @id @default(cuid())
+  documentId String
+  document   Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  index      Int
+  label      String // "CAPÍTULO I"
+  title      String? // título do capítulo
+  sections   Section[]
+  articles   Article[]
+
+  @@index([documentId])
+  @@map("chapters")
+}
+
+model Section {
+  id         String    @id @default(cuid())
+  documentId String
+  document   Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  chapterId  String?
+  chapter    Chapter?  @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  index      Int
+  label      String // "Seção II" | "Subseção I"
+  title      String?
+  isSubsection Boolean @default(false)
+  articles   Article[]
+
+  @@index([documentId])
+  @@map("sections")
+}
+
+model Article {
+  id         String      @id @default(cuid())
+  documentId String
+  document   Document    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  chapterId  String?
+  chapter    Chapter?    @relation(fields: [chapterId], references: [id], onDelete: SetNull)
+  sectionId  String?
+  section    Section?    @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+  index      Int
+  number     String // "35", "5-A"
+  label      String // "Art. 35"
+  caput      String
+  fullText   String // texto completo do artigo (caput + parágrafos + incisos...)
+  paragraphs Paragraph[]
+  incisos    Inciso[]
+  chunks     Chunk[]
+
+  @@index([documentId])
+  @@map("articles")
+}
+
+model Paragraph {
+  id         String   @id @default(cuid())
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  articleId  String
+  article    Article  @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  index      Int
+  label      String // "§ 1º" | "Parágrafo único"
+  text       String
+  incisos    Inciso[]
+
+  @@index([documentId])
+  @@index([articleId])
+  @@map("paragraphs")
+}
+
+model Inciso {
+  id          String     @id @default(cuid())
+  documentId  String
+  document    Document   @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  articleId   String?
+  article     Article?   @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  paragraphId String?
+  paragraph   Paragraph? @relation(fields: [paragraphId], references: [id], onDelete: Cascade)
+  index       Int
+  label       String // "I", "IV"
+  text        String
+  alineas     Alinea[]
+
+  @@index([documentId])
+  @@map("incisos")
+}
+
+model Alinea {
+  id         String   @id @default(cuid())
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  incisoId   String
+  inciso     Inciso   @relation(fields: [incisoId], references: [id], onDelete: Cascade)
+  index      Int
+  label      String // "a", "b"
+  text       String
+  items      Json? // itens numerados dentro da alínea ("1.", "2.")
+
+  @@index([documentId])
+  @@map("alineas")
+}
+
+// ---------------------------------------------------------------------------
+// Step 6 — Chunks | Step 7 — Enriquecimento IA
+// ---------------------------------------------------------------------------
+
+model Chunk {
+  id         String   @id @default(cuid())
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  articleId  String?
+  article    Article? @relation(fields: [articleId], references: [id], onDelete: SetNull)
+  index      Int
+  content    String
+  tokenCount Int
+  charCount  Int
+  part       Int      @default(1) // parte N quando o artigo excede o limite
+  totalParts Int      @default(1)
+
+  // Origem / contexto preservado
+  originArticle String? // "Art. 35"
+  originChapter String? // "CAPÍTULO IV — ..."
+  originSection String? // "Seção II — ..."
+
+  // Enriquecimento IA (Step 7) — armazenado junto ao chunk
+  enrichment           Json? // resumo, palavras-chave, tema, subtema, categoria, ...
+  enrichmentPrompt     String?
+  enrichmentResponse   String?
+  enrichmentModel      String?
+  enrichmentDurationMs Int?
+  enrichmentCostUsd    Float?
+
+  createdAt DateTime   @default(now())
+  embedding Embedding?
+
+  @@index([documentId, index])
+  @@map("chunks")
+}
+
+// ---------------------------------------------------------------------------
+// Step 8 — Embeddings | Step 9 — Banco Vetorial
+// ---------------------------------------------------------------------------
+
+model Embedding {
+  id         String                       @id @default(cuid())
+  documentId String
+  document   Document                     @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  chunkId    String                       @unique
+  chunk      Chunk                        @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+  vector     Unsupported("vector(1536)")?
+  model      String
+  dimension  Int
+  hash       String // sha256 do conteúdo do chunk — evita regerar sem necessidade
+  durationMs Int
+  indexed    Boolean                      @default(false)
+  indexedAt  DateTime?
+  metadata   Json? // metadados gravados no banco vetorial (Step 9)
+  createdAt  DateTime                     @default(now())
+
+  @@index([documentId])
+  @@map("embeddings")
+}
+
+// ---------------------------------------------------------------------------
+// Logs e Jobs
+// ---------------------------------------------------------------------------
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model PipelineLog {
+  id         String   @id @default(cuid())
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  step       String // EXTRACTION | CLEANING | ...
+  level      String   @default("info") // info | warn | error
+  message    String
+  meta       Json?
+  createdAt  DateTime @default(now())
+
+  @@index([documentId, createdAt])
+  @@map("pipeline_logs")
+}
+
+model ProcessingJob {
+  id         String    @id @default(cuid())
+  documentId String
+  document   Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  step       String
+  status     JobStatus @default(PENDING)
+  error      String?
+  meta       Json?
+  startedAt  DateTime?
+  finishedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([documentId, createdAt])
+  @@map("processing_jobs")
+}
+
+// ---------------------------------------------------------------------------
+// Configurações (regex, chunking, IA, embeddings)
+// ---------------------------------------------------------------------------
+
+model AppSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+
+  @@map("app_settings")
+}
