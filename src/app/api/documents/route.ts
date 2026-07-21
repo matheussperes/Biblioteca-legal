@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/database/client";
 import { createDocument } from "@/modules/ingestion";
-import { supabaseAdmin, UPLOAD_BUCKET } from "@/lib/supabase-admin";
+import { getSupabaseAdmin, UPLOAD_BUCKET } from "@/lib/supabase-admin";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -78,8 +78,8 @@ export async function POST(request: NextRequest) {
     // e descartamos o objeto temporário — o armazenamento definitivo
     // continua em Document.originalContent, como nos demais fluxos.
     if (typeof body.storagePath === "string" && body.storagePath.trim()) {
-      const { data: blob, error } = await supabaseAdmin.storage
-        .from(UPLOAD_BUCKET)
+      const { data: blob, error } = await getSupabaseAdmin()
+        .storage.from(UPLOAD_BUCKET)
         .download(body.storagePath);
       if (error || !blob) {
         return NextResponse.json(
@@ -93,7 +93,7 @@ export async function POST(request: NextRequest) {
         mimeType: body.mimeType || undefined,
         buffer,
       });
-      await supabaseAdmin.storage.from(UPLOAD_BUCKET).remove([body.storagePath]);
+      await getSupabaseAdmin().storage.from(UPLOAD_BUCKET).remove([body.storagePath]);
       return NextResponse.json(document, { status: 201 });
     }
 
