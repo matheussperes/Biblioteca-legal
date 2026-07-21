@@ -41,12 +41,15 @@ export async function createDocument(input: UploadInput) {
       type,
       mimeType: input.mimeType,
       sizeBytes: input.buffer?.length ?? input.pastedText?.length ?? 0,
+      // View sobre o mesmo buffer (sem copiar) — só pra bater com o tipo
+      // Uint8Array<ArrayBuffer> que o Prisma espera. ArrayBuffer.slice() (usado
+      // antes) duplicava o conteúdo inteiro em memória, o que estourava o
+      // limite da function em uploads grandes (~35 MB).
       originalContent: input.buffer
         ? new Uint8Array(
-            input.buffer.buffer.slice(
-              input.buffer.byteOffset,
-              input.buffer.byteOffset + input.buffer.byteLength
-            ) as ArrayBuffer
+            input.buffer.buffer as ArrayBuffer,
+            input.buffer.byteOffset,
+            input.buffer.byteLength
           )
         : undefined,
       pastedText: input.pastedText,
