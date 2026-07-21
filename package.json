@@ -5,9 +5,10 @@
   "description": "Base de Conhecimento para RAG (Fase 1) — transforma documentos brutos em conhecimento estruturado, enriquecido e indexado.",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "prisma generate && next build",
     "start": "next start",
     "lint": "next lint",
+    "postinstall": "prisma generate",
     "test": "vitest run",
     "test:watch": "vitest",
     "db:migrate": "prisma migrate dev",
