@@ -225,6 +225,7 @@ model Chunk {
 
   createdAt DateTime   @default(now())
   embedding Embedding?
+  retrievals Retrieval[]
 
   @@index([documentId, index])
   @@map("chunks")
@@ -305,4 +306,118 @@ model AppSetting {
   updatedAt DateTime @updatedAt
 
   @@map("app_settings")
+}
+
+// ---------------------------------------------------------------------------
+// Fase 2 — Motor RAG para Legislação Urbanística
+// ---------------------------------------------------------------------------
+
+model Conversation {
+  id        String     @id @default(cuid())
+  title     String?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  questions Question[]
+
+  @@map("conversation_history")
+}
+
+model Question {
+  id                 String       @id @default(cuid())
+  conversationId     String
+  conversation       Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  index              Int // ordem da pergunta na conversa
+  text               String
+  category           String? // classificação (Zoneamento, Recuos, Licenciamento, ...)
+  categoryConfidence Float?
+  entities           Json? // entidades extraídas (cidade, lei, zona, medidas...)
+  createdAt          DateTime     @default(now())
+
+  retrievals    Retrieval[]
+  promptHistory PromptHistory[]
+  answer        Answer?
+
+  @@index([conversationId, index])
+  @@map("questions")
+}
+
+model Retrieval {
+  id         String   @id @default(cuid())
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  stage      String // VECTOR | METADATA | REFERENCE | RERANK
+  rank       Int
+  chunkId    String
+  chunk      Chunk    @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+  score      Float? // distância vetorial (menor = mais similar) ou score do reranker (0-10)
+  reason     String? // motivo da recuperação — explicabilidade
+  createdAt  DateTime @default(now())
+
+  @@index([questionId, stage])
+  @@map("retrievals")
+}
+
+model Answer {
+  id                   String   @id @default(cuid())
+  questionId           String   @unique
+  question             Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  resumoExecutivo      String
+  fundamentacao        String
+  artigosUtilizados    Json // [{ chunkId, articleId, lei, capitulo, secao, artigo }]
+  referenciasCruzadas  Json // [{ lei, artigo, motivo }]
+  observacoes          String?
+  nivelConfianca       String // ALTO | MEDIO | BAIXO
+  hasConflict          Boolean  @default(false)
+  conflictDetails      Json? // [{ tema, versoes: [{ lei, artigo, valor }] }]
+  insufficientEvidence Boolean  @default(false)
+  model                String
+  temperature           Float
+  promptTokens         Int      @default(0)
+  completionTokens     Int      @default(0)
+  costUsd              Float    @default(0)
+  durationMs           Int      @default(0)
+  trace                Json? // explicabilidade completa: consulta → chunks → reranking → prompt → resposta
+  createdAt            DateTime @default(now())
+
+  feedback Feedback[]
+
+  @@map("answers")
+}
+
+model PromptHistory {
+  id          String   @id @default(cuid())
+  questionId  String
+  question    Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  stage       String // CLASSIFICATION | ENTITY_EXTRACTION | RERANK | GENERATION
+  prompt      String
+  rawResponse String?
+  model       String?
+  createdAt   DateTime @default(now())
+
+  @@index([questionId])
+  @@map("prompt_history")
+}
+
+model Feedback {
+  id        String   @id @default(cuid())
+  answerId  String
+  answer    Answer   @relation(fields: [answerId], references: [id], onDelete: Cascade)
+  rating    String // UP | DOWN
+  comment   String?
+  createdAt DateTime @default(now())
+
+  @@index([answerId])
+  @@map("feedback")
+}
+
+model Favorite {
+  id        String   @id @default(cuid())
+  type      String // QUESTION | LAW | ARTICLE | ANSWER
+  refId     String
+  title     String
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([type])
+  @@map("favorites")
 }

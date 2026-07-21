@@ -14,3 +14,11 @@ export function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms} ms`;
   return `${(ms / 1000).toFixed(1)} s`;
 }
+
+/** minúsculas + sem acentuação — usado para comparações de texto tolerantes (Fase 2). */
+export function normalizeText(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "");
+}

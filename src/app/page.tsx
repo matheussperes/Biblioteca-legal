@@ -1,186 +1,269 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { FilePlus2, Play, RefreshCw, Trash2 } from "lucide-react";
-import { Button, Card, CardContent, Table, Th, Td, Spinner } from "@/components/ui";
-import { StatusBadge } from "@/components/StatusBadge";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { MessageSquarePlus, Send } from "lucide-react";
+import { Button, Card, CardContent, Spinner, Textarea } from "@/components/ui";
+import { AnswerCard } from "@/components/chat/AnswerCard";
+import { ArticleViewerModal } from "@/components/chat/ArticleViewerModal";
+import { ExplainabilityModal } from "@/components/chat/ExplainabilityModal";
+import { evidencesFromTrace, type ChatExchange } from "@/components/chat/types";
+import { EMPTY_ENTITIES } from "@/shared/rag-types";
+import type { ExplainabilityTrace } from "@/shared/rag-types";
 
-interface DocumentRow {
+const EXAMPLE_QUESTIONS = [
+  "Posso construir um prédio de 12 metros nesta zona?",
+  "Qual o recuo obrigatório?",
+  "Posso construir piscina sobre o recuo?",
+  "Qual o coeficiente máximo?",
+  "Preciso de Alvará de Aprovação?",
+  "Existe conflito entre o Código de Obras e a LUOS?",
+];
+
+interface ConversationSummary {
   id: string;
-  name: string;
-  type: string;
-  status: string;
-  createdAt: string;
-  articleCount: number;
-  chunkCount: number;
-  embeddingCount: number;
-  indexedCount: number;
+  title: string;
+  updatedAt: string;
+  questionCount: number;
 }
 
-/** Próximo step a executar de acordo com o status atual. */
-const NEXT_STEP: Record<string, string | null> = {
-  UPLOADED: "extraction",
-  EXTRACTED: "cleaning",
-  CLEANED: "tokenization",
-  TOKENIZED: "parsing",
-  PARSED: "tree",
-  TREE_CREATED: "chunking",
-  CHUNKED: "enrichment",
-  ENRICHED: "embeddings",
-  EMBEDDED: "indexing",
-  INDEXED: null,
-};
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function questionToExchange(q: any): ChatExchange | null {
+  if (!q.answer) return null;
+  const trace = (q.answer.trace as ExplainabilityTrace | null) ?? null;
+  return {
+    questionId: q.id,
+    answerId: q.answer.id,
+    questionText: q.text,
+    category: q.category ?? "Outros",
+    categoryConfidence: q.categoryConfidence ?? 0,
+    entities: q.entities ?? EMPTY_ENTITIES,
+    answer: {
+      resumoExecutivo: q.answer.resumoExecutivo,
+      fundamentacao: q.answer.fundamentacao,
+      artigosUtilizados: q.answer.artigosUtilizados ?? [],
+      referenciasCruzadas: q.answer.referenciasCruzadas ?? [],
+      observacoes: q.answer.observacoes ?? "",
+      nivelConfianca: q.answer.nivelConfianca,
+      hasConflict: q.answer.hasConflict,
+      conflictDetails: q.answer.conflictDetails ?? [],
+    },
+    evidences: evidencesFromTrace(trace),
+    warnings: [],
+    insufficientEvidence: q.answer.insufficientEvidence,
+    trace,
+    model: q.answer.model,
+    temperature: q.answer.temperature,
+    promptTokens: q.answer.promptTokens,
+    completionTokens: q.answer.completionTokens,
+    costUsd: q.answer.costUsd,
+    durationMs: q.answer.durationMs,
+  };
+}
 
-export default function DashboardPage() {
-  const router = useRouter();
-  const [documents, setDocuments] = useState<DocumentRow[] | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+export default function ChatPage() {
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [exchanges, setExchanges] = useState<ChatExchange[]>([]);
+  const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
+  const [explainTrace, setExplainTrace] = useState<ExplainabilityTrace | null>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
-  const load = useCallback(async () => {
-    const res = await fetch("/api/documents");
-    setDocuments(await res.json());
+  const loadConversations = useCallback(async () => {
+    const res = await fetch("/api/rag/history");
+    if (res.ok) setConversations(await res.json());
   }, []);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    loadConversations();
+  }, [loadConversations]);
 
-  const continuePipeline = async (doc: DocumentRow) => {
-    const step = NEXT_STEP[doc.status];
-    if (!step) {
-      router.push(`/documents/${doc.id}`);
-      return;
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [exchanges]);
+
+  const openConversation = async (id: string) => {
+    setActiveConversationId(id);
+    setError(null);
+    const res = await fetch(`/api/rag/history/${id}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const loaded = (data.questions as any[])
+      .map(questionToExchange)
+      .filter((e): e is ChatExchange => e !== null);
+    setExchanges(loaded);
+  };
+
+  const newConversation = () => {
+    setActiveConversationId(null);
+    setExchanges([]);
+    setError(null);
+  };
+
+  const send = async (text: string) => {
+    const question = text.trim();
+    if (!question || sending) return;
+    setInput("");
+    setSending(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/rag/question", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: question, conversationId: activeConversationId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "Falha ao consultar a Base de Conhecimento.");
+        return;
+      }
+      setActiveConversationId(data.conversationId);
+      setExchanges((prev) => [...prev, { ...data, questionText: question }]);
+      loadConversations();
+    } catch {
+      setError("Falha de rede ao consultar a Base de Conhecimento.");
+    } finally {
+      setSending(false);
     }
-    setBusy(doc.id);
-    await fetch(`/api/documents/${doc.id}/steps/${step}`, { method: "POST" });
-    setBusy(null);
-    await load();
-  };
-
-  const reprocess = async (doc: DocumentRow) => {
-    if (!confirm(`Reprocessar "${doc.name}" desde a extração?`)) return;
-    setBusy(doc.id);
-    await fetch(`/api/documents/${doc.id}/steps/extraction`, { method: "POST" });
-    setBusy(null);
-    router.push(`/documents/${doc.id}`);
-  };
-
-  const remove = async (doc: DocumentRow) => {
-    if (!confirm(`Excluir "${doc.name}" e todos os seus artefatos?`)) return;
-    await fetch(`/api/documents/${doc.id}`, { method: "DELETE" });
-    await load();
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Documentos</h1>
-        <Link href="/upload">
-          <Button>
-            <FilePlus2 className="h-4 w-4" /> Novo Documento
+    <div className="grid h-[calc(100vh-8rem)] grid-cols-[240px_1fr_300px] gap-4">
+      {/* Esquerda — Histórico */}
+      <Card className="flex flex-col overflow-hidden">
+        <div className="border-b border-zinc-100 p-3">
+          <Button size="sm" className="w-full" onClick={newConversation}>
+            <MessageSquarePlus className="h-3.5 w-3.5" /> Nova conversa
           </Button>
-        </Link>
-      </div>
-
-      <Card>
-        <CardContent className="p-0">
-          {documents === null ? (
-            <div className="flex items-center justify-center gap-2 p-8 text-sm text-zinc-500">
-              <Spinner /> Carregando...
-            </div>
-          ) : documents.length === 0 ? (
-            <div className="p-8 text-center text-sm text-zinc-500">
-              Nenhum documento ainda.{" "}
-              <Link href="/upload" className="text-indigo-600 hover:underline">
-                Envie o primeiro documento
-              </Link>
-              .
-            </div>
+        </div>
+        <div className="flex-1 overflow-y-auto p-2">
+          {conversations.length === 0 ? (
+            <p className="p-2 text-xs text-zinc-400">Nenhuma conversa ainda.</p>
           ) : (
-            <Table>
-              <thead>
-                <tr>
-                  <Th>Nome</Th>
-                  <Th>Tipo</Th>
-                  <Th>Data Upload</Th>
-                  <Th>Status Atual</Th>
-                  <Th className="text-right">Artigos</Th>
-                  <Th className="text-right">Chunks</Th>
-                  <Th className="text-right">Embeddings</Th>
-                  <Th className="text-right">Indexado</Th>
-                  <Th>Ações</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {documents.map((doc) => (
-                  <tr key={doc.id} className="hover:bg-zinc-50">
-                    <Td>
-                      <Link
-                        href={`/documents/${doc.id}`}
-                        className="font-medium text-indigo-600 hover:underline"
-                      >
-                        {doc.name}
-                      </Link>
-                    </Td>
-                    <Td>{doc.type}</Td>
-                    <Td className="whitespace-nowrap">
-                      {new Date(doc.createdAt).toLocaleString("pt-BR")}
-                    </Td>
-                    <Td>
-                      <StatusBadge status={doc.status} />
-                    </Td>
-                    <Td className="text-right">{doc.articleCount}</Td>
-                    <Td className="text-right">{doc.chunkCount}</Td>
-                    <Td className="text-right">{doc.embeddingCount}</Td>
-                    <Td className="text-right">
-                      {doc.indexedCount > 0
-                        ? `${doc.indexedCount}/${doc.chunkCount}`
-                        : "—"}
-                    </Td>
-                    <Td>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          disabled={busy === doc.id || doc.status === "INDEXED"}
-                          onClick={() => continuePipeline(doc)}
-                          title="Continuar Pipeline"
-                        >
-                          {busy === doc.id ? (
-                            <Spinner className="h-3 w-3" />
-                          ) : (
-                            <Play className="h-3 w-3" />
-                          )}
-                          Continuar
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={busy === doc.id}
-                          onClick={() => reprocess(doc)}
-                          title="Reprocessar desde a extração"
-                        >
-                          <RefreshCw className="h-3 w-3" /> Reprocessar
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => remove(doc)}
-                          title="Excluir"
-                        >
-                          <Trash2 className="h-3 w-3 text-red-600" />
-                        </Button>
-                      </div>
-                    </Td>
-                  </tr>
-                ))}
-              </tbody>
-            </Table>
+            conversations.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => openConversation(c.id)}
+                className={`mb-1 block w-full truncate rounded-md px-2.5 py-2 text-left text-xs ${
+                  c.id === activeConversationId ? "bg-indigo-50 text-indigo-700" : "hover:bg-zinc-50"
+                }`}
+                title={c.title}
+              >
+                {c.title}
+                <span className="ml-1 text-zinc-400">({c.questionCount})</span>
+              </button>
+            ))
           )}
-        </CardContent>
+        </div>
       </Card>
+
+      {/* Centro — Conversa */}
+      <Card className="flex flex-col overflow-hidden">
+        <CardContent className="flex-1 space-y-4 overflow-y-auto">
+          {exchanges.length === 0 && (
+            <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
+              <p className="text-sm text-zinc-500">
+                Pergunte sobre legislação urbanística — recuos, alturas, coeficientes, licenciamento e mais.
+              </p>
+              <div className="flex max-w-md flex-wrap justify-center gap-2">
+                {EXAMPLE_QUESTIONS.map((q) => (
+                  <button
+                    key={q}
+                    onClick={() => send(q)}
+                    className="rounded-full border border-zinc-200 px-3 py-1.5 text-xs text-zinc-600 hover:border-indigo-300 hover:text-indigo-700"
+                  >
+                    {q}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {exchanges.map((exchange) => (
+            <AnswerCard
+              key={exchange.questionId}
+              exchange={exchange}
+              onSelectArticle={setSelectedArticleId}
+              onExplain={() => setExplainTrace(exchange.trace)}
+            />
+          ))}
+          {sending && (
+            <div className="flex items-center gap-2 pl-1 text-xs text-zinc-400">
+              <Spinner /> Consultando a Base de Conhecimento...
+            </div>
+          )}
+          {error && <div className="rounded bg-red-50 p-2 text-xs text-red-700">{error}</div>}
+          <div ref={bottomRef} />
+        </CardContent>
+        <div className="border-t border-zinc-100 p-3">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              send(input);
+            }}
+            className="flex items-end gap-2"
+          >
+            <Textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  send(input);
+                }
+              }}
+              placeholder="Digite sua pergunta sobre legislação urbanística..."
+              rows={2}
+              className="flex-1 resize-none"
+            />
+            <Button type="submit" disabled={sending || !input.trim()}>
+              <Send className="h-4 w-4" />
+            </Button>
+          </form>
+        </div>
+      </Card>
+
+      {/* Direita — Painel Jurídico */}
+      <Card className="flex flex-col overflow-hidden">
+        <div className="border-b border-zinc-100 px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+          Painel Jurídico
+        </div>
+        <div className="flex-1 overflow-y-auto p-3">
+          {exchanges.length === 0 ? (
+            <p className="text-xs text-zinc-400">
+              As evidências utilizadas na última resposta (origem, artigo e score de similaridade) aparecem aqui.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {exchanges[exchanges.length - 1].evidences.map((ev) => (
+                <button
+                  key={ev.chunkId}
+                  onClick={() => {
+                    const item = exchanges[exchanges.length - 1].answer.artigosUtilizados.find(
+                      (a) => a.chunkId === ev.chunkId
+                    );
+                    if (item?.articleId) setSelectedArticleId(item.articleId);
+                  }}
+                  className="block w-full rounded-md border border-zinc-100 bg-zinc-50 p-2 text-left text-xs hover:border-indigo-200"
+                >
+                  <div className="font-medium text-zinc-700">
+                    {ev.lei} {ev.artigo ?? ""}
+                  </div>
+                  <div className="mt-0.5 text-zinc-500">
+                    {ev.scoreSimilaridade != null && `distância ${ev.scoreSimilaridade.toFixed(4)}`}
+                  </div>
+                  <div className="mt-0.5 text-zinc-400">{ev.motivoRecuperacao}</div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </Card>
+
+      <ArticleViewerModal articleId={selectedArticleId} onClose={() => setSelectedArticleId(null)} />
+      <ExplainabilityModal trace={explainTrace} onClose={() => setExplainTrace(null)} />
     </div>
   );
 }

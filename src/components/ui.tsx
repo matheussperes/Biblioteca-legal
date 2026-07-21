@@ -203,3 +203,44 @@ export function Spinner({ className }: { className?: string }) {
     />
   );
 }
+
+export function Modal({
+  open,
+  onClose,
+  title,
+  children,
+  wide = false,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: React.ReactNode;
+  children: React.ReactNode;
+  wide?: boolean;
+}) {
+  if (!open) return null;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+    >
+      <div
+        className={cn(
+          "flex max-h-[85vh] w-full flex-col rounded-lg bg-white shadow-xl",
+          wide ? "max-w-3xl" : "max-w-lg"
+        )}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-3">
+          <h3 className="text-sm font-semibold">{title}</h3>
+          <button
+            onClick={onClose}
+            className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="overflow-y-auto p-4">{children}</div>
+      </div>
+    </div>
+  );
+}
