@@ -13,8 +13,12 @@ import {
   Textarea,
   Spinner,
 } from "@/components/ui";
+import { readJson } from "@/shared/http-client";
 
 const ACCEPT = ".pdf,.docx,.txt,.html,.htm,.md,.markdown";
+// Limite de corpo de requisição das Serverless Functions (Vercel): 4.5 MB.
+// Acima disso a plataforma rejeita antes do código da rota rodar.
+const MAX_UPLOAD_BYTES = 4.5 * 1024 * 1024;
 
 export default function UploadPage() {
   const router = useRouter();
@@ -26,14 +30,19 @@ export default function UploadPage() {
   const [pastedName, setPastedName] = useState("");
 
   const sendFile = async (file: File) => {
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setError(
+        `Arquivo muito grande (${(file.size / (1024 * 1024)).toFixed(1)} MB). O limite é de 4.5 MB.`
+      );
+      return;
+    }
     setSending(true);
     setError(null);
     try {
       const form = new FormData();
       form.append("file", file);
       const res = await fetch("/api/documents", { method: "POST", body: form });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Falha no upload.");
+      const data = await readJson<{ id: string }>(res);
       router.push(`/documents/${data.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -54,8 +63,7 @@ export default function UploadPage() {
           pastedText,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Falha ao salvar o texto.");
+      const data = await readJson<{ id: string }>(res);
       router.push(`/documents/${data.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

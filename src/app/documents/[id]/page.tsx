@@ -16,6 +16,7 @@ import { EnrichmentPanel } from "@/components/steps/EnrichmentPanel";
 import { EmbeddingsPanel } from "@/components/steps/EmbeddingsPanel";
 import { IndexPanel } from "@/components/steps/IndexPanel";
 import { LogsPanel } from "@/components/steps/LogsPanel";
+import { readJson } from "@/shared/http-client";
 
 const STEPS = [
   { id: "extraction", label: "1. Extração", doneAt: "EXTRACTED" },
@@ -80,8 +81,7 @@ export default function DocumentPage({
         `/api/documents/${id}/steps/${stepId}${cascade ? "?cascade=true" : ""}`,
         { method: "POST" }
       );
-      const data = await res.json();
-      if (!res.ok) setError(data.error ?? "Falha ao executar o step.");
+      await readJson(res);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
