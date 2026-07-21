@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin, UPLOAD_BUCKET } from "@/lib/supabase-admin";
+import { getSupabaseAdmin, UPLOAD_BUCKET } from "@/lib/supabase-admin";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
   }
 
   const path = `${randomUUID()}-${name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
-  const { data, error } = await supabaseAdmin.storage
+  const { data, error } = await getSupabaseAdmin().storage
     .from(UPLOAD_BUCKET)
     .createSignedUploadUrl(path);
 
