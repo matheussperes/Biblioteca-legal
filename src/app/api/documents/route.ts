@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/database/client";
 import { createDocument } from "@/modules/ingestion";
-import { getSupabaseAdmin, UPLOAD_BUCKET } from "@/lib/supabase-admin";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
 
 /** Dashboard — lista documentos com contadores. */
 export async function GET() {
@@ -73,27 +71,17 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
 
-    // Arquivo grande: já foi enviado direto ao Supabase Storage pelo
-    // navegador (ver /api/documents/upload-url). Aqui só baixamos os bytes
-    // e descartamos o objeto temporário — o armazenamento definitivo
-    // continua em Document.originalContent, como nos demais fluxos.
+    // Arquivo já foi enviado direto ao Supabase Storage pelo navegador (ver
+    // /api/documents/upload-url) — fica armazenado só lá, não baixamos nem
+    // duplicamos os bytes no Postgres (isso é o que estourava a memória da
+    // function em uploads grandes, ~35 MB).
     if (typeof body.storagePath === "string" && body.storagePath.trim()) {
-      const { data: blob, error } = await getSupabaseAdmin()
-        .storage.from(UPLOAD_BUCKET)
-        .download(body.storagePath);
-      if (error || !blob) {
-        return NextResponse.json(
-          { error: error?.message ?? "Falha ao recuperar o arquivo enviado." },
-          { status: 500 }
-        );
-      }
-      const buffer = Buffer.from(await blob.arrayBuffer());
       const document = await createDocument({
         name: body.name || "Documento",
         mimeType: body.mimeType || undefined,
-        buffer,
+        storagePath: body.storagePath,
+        sizeBytes: typeof body.sizeBytes === "number" ? body.sizeBytes : undefined,
       });
-      await getSupabaseAdmin().storage.from(UPLOAD_BUCKET).remove([body.storagePath]);
       return NextResponse.json(document, { status: 201 });
     }
 

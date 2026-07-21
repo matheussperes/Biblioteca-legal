@@ -25,6 +25,7 @@ import { enrichText } from "@/modules/enrichment";
 import { generateEmbeddings } from "@/modules/embeddings";
 import { storeVector, indexDocument } from "@/modules/vector-index";
 import { locateArticlePages, assignFiguresToArticles } from "./figure-linking";
+import { getSupabaseAdmin, UPLOAD_BUCKET } from "@/lib/supabase-admin";
 
 // ---------------------------------------------------------------------------
 // Pipeline Engine.
@@ -198,12 +199,24 @@ async function stepExtraction(documentId: string, config: PipelineConfig) {
   const document = await prisma.document.findUniqueOrThrow({
     where: { id: documentId },
   });
+
+  let buffer: Buffer | undefined;
+  if (document.storagePath) {
+    const { data: blob, error } = await getSupabaseAdmin()
+      .storage.from(UPLOAD_BUCKET)
+      .download(document.storagePath);
+    if (error || !blob) {
+      throw new Error(error?.message ?? "Falha ao baixar o arquivo original do storage.");
+    }
+    buffer = Buffer.from(await blob.arrayBuffer());
+  } else if (document.originalContent) {
+    buffer = Buffer.from(document.originalContent);
+  }
+
   const result = await extractText(
     {
       type: document.type,
-      buffer: document.originalContent
-        ? Buffer.from(document.originalContent)
-        : undefined,
+      buffer,
       pastedText: document.pastedText ?? undefined,
     },
     config.ocr

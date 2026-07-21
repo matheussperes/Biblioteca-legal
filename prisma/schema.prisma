@@ -43,7 +43,8 @@ model Document {
   type            DocumentType
   mimeType        String?
   sizeBytes       Int            @default(0)
-  originalContent Bytes? // arquivo original (PDF/DOCX/...)
+  originalContent Bytes? // arquivo original (PDF/DOCX/...) — legado, arquivos antigos
+  storagePath     String? // caminho no bucket "document-uploads" do Supabase Storage — arquivos novos
   pastedText      String? // texto colado diretamente
   status          PipelineStatus @default(UPLOADED)
 
