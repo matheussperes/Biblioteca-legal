@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/database/client";
 import { createDocument } from "@/modules/ingestion";
+import { supabaseAdmin, UPLOAD_BUCKET } from "@/lib/supabase-admin";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 /** Dashboard — lista documentos com contadores. */
 export async function GET() {
@@ -70,6 +72,31 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
+
+    // Arquivo grande: já foi enviado direto ao Supabase Storage pelo
+    // navegador (ver /api/documents/upload-url). Aqui só baixamos os bytes
+    // e descartamos o objeto temporário — o armazenamento definitivo
+    // continua em Document.originalContent, como nos demais fluxos.
+    if (typeof body.storagePath === "string" && body.storagePath.trim()) {
+      const { data: blob, error } = await supabaseAdmin.storage
+        .from(UPLOAD_BUCKET)
+        .download(body.storagePath);
+      if (error || !blob) {
+        return NextResponse.json(
+          { error: error?.message ?? "Falha ao recuperar o arquivo enviado." },
+          { status: 500 }
+        );
+      }
+      const buffer = Buffer.from(await blob.arrayBuffer());
+      const document = await createDocument({
+        name: body.name || "Documento",
+        mimeType: body.mimeType || undefined,
+        buffer,
+      });
+      await supabaseAdmin.storage.from(UPLOAD_BUCKET).remove([body.storagePath]);
+      return NextResponse.json(document, { status: 201 });
+    }
+
     if (typeof body.pastedText !== "string" || !body.pastedText.trim()) {
       return NextResponse.json(
         { error: "Campo 'pastedText' ausente ou vazio." },
