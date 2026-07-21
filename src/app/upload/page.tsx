@@ -59,11 +59,17 @@ export default function UploadPage() {
         throw new Error("Falha ao enviar o arquivo para o armazenamento.");
       }
 
-      // 3) servidor baixa do storage e cria o documento.
+      // 3) cria o documento referenciando o arquivo no storage (não baixa
+      //    os bytes de volta — o arquivo fica só no Supabase Storage).
       const res = await fetch("/api/documents", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ storagePath: path, name: file.name, mimeType: file.type }),
+        body: JSON.stringify({
+          storagePath: path,
+          name: file.name,
+          mimeType: file.type,
+          sizeBytes: file.size,
+        }),
       });
       const data = await readJson<{ id: string }>(res);
       router.push(`/documents/${data.id}`);
