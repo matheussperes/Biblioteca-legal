@@ -18,6 +18,18 @@ export async function GET(_request: NextRequest, { params }: Params) {
       paragraphs: { orderBy: { index: "asc" }, include: { incisos: { orderBy: { index: "asc" }, include: { alineas: { orderBy: { index: "asc" } } } } } },
       incisos: { where: { paragraphId: null }, orderBy: { index: "asc" }, include: { alineas: { orderBy: { index: "asc" } } } },
       chunks: { orderBy: { part: "asc" } },
+      figures: {
+        orderBy: [{ page: "asc" }, { index: "asc" }],
+        select: {
+          id: true,
+          page: true,
+          imageBase64: true,
+          width: true,
+          height: true,
+          description: true,
+          ocrText: true,
+        },
+      },
     },
   });
   if (!article) {
@@ -72,5 +84,14 @@ export async function GET(_request: NextRequest, { params }: Params) {
     enrichment,
     situacao,
     chunkIds: article.chunks.map((c) => c.id),
+    figures: article.figures.map((f) => ({
+      id: f.id,
+      page: f.page,
+      imageBase64: f.imageBase64,
+      width: f.width,
+      height: f.height,
+      description: f.description,
+      ocrText: f.ocrText,
+    })),
   });
 }

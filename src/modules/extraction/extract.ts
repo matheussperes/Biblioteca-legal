@@ -1,5 +1,7 @@
 import { convert as htmlToText } from "html-to-text";
 import type { ExtractionResult } from "@/shared/types";
+import type { OcrConfig } from "@/shared/config";
+import { extractPdf } from "./pdf-engine";
 
 export interface ExtractionInput {
   type: "PDF" | "DOCX" | "TXT" | "HTML" | "MARKDOWN" | "PASTED";
@@ -12,9 +14,12 @@ export interface ExtractionInput {
 /**
  * Step 1 — Extração de Texto.
  * Converte qualquer documento suportado em texto puro.
+ * Para PDFs, `ocrConfig` controla o OCR via Vision API (páginas digitalizadas)
+ * e a detecção/recorte de figuras — ver `pdf-engine.ts`.
  */
 export async function extractText(
-  input: ExtractionInput
+  input: ExtractionInput,
+  ocrConfig?: OcrConfig
 ): Promise<ExtractionResult> {
   const start = Date.now();
   const warnings: string[] = [];
@@ -56,22 +61,27 @@ export async function extractText(
       };
     }
     case "PDF": {
-      // import interno para evitar o modo debug do pdf-parse quando carregado no bundle
-      const { default: pdfParse } = await import("pdf-parse/lib/pdf-parse.js");
-      const result = await pdfParse(requireBuffer(input));
+      const { DEFAULT_CONFIG } = await import("@/shared/config");
+      const config = ocrConfig ?? DEFAULT_CONFIG.ocr;
+      const result = await extractPdf(requireBuffer(input), config);
+      warnings.push(...result.warnings);
       if (!result.text.trim()) {
         warnings.push(
-          "Nenhum texto extraído — o PDF pode ser digitalizado (imagem). OCR não é suportado nesta fase."
+          "Nenhum texto extraído do PDF, nem via OCR — verifique a qualidade do arquivo."
         );
       }
       return {
         text: result.text,
         meta: {
-          engine: "pdf-parse",
-          pages: result.numpages,
+          engine: result.ocrPages.length > 0 ? "pdfjs+vision-ocr" : "pdfjs",
+          pages: result.pages,
           warnings,
           durationMs: Date.now() - start,
+          pageOffsets: result.pageOffsets,
+          ocrPages: result.ocrPages,
+          figuresDetected: result.figures.length,
         },
+        figures: result.figures,
       };
     }
     case "DOCX": {

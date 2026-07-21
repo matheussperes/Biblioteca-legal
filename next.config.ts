@@ -1,7 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["pdf-parse", "mammoth", "@prisma/client"],
+  serverExternalPackages: [
+    "mammoth",
+    "@prisma/client",
+    "pdfjs-dist",
+    "@napi-rs/canvas",
+  ],
   experimental: {
     serverActions: {
       bodySizeLimit: "50mb",

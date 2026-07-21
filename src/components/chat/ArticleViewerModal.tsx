@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Star } from "lucide-react";
 import { Badge, Button, Modal, Spinner } from "@/components/ui";
+import { FigureGrid, type FigureRow } from "@/components/FigureGrid";
 
 interface ArticleDetail {
   id: string;
@@ -21,6 +22,7 @@ interface ArticleDetail {
   incisos: Array<{ label: string; texto: string; alineas: Array<{ label: string; texto: string }> }>;
   enrichment: Record<string, unknown> | null;
   situacao: string;
+  figures: FigureRow[];
 }
 
 export function ArticleViewerModal({
@@ -125,6 +127,15 @@ export function ArticleViewerModal({
               </div>
             ))}
           </div>
+
+          {article.figures.length > 0 && (
+            <div>
+              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                Figuras
+              </div>
+              <FigureGrid figures={article.figures} />
+            </div>
+          )}
 
           {palavrasChave.length > 0 && (
             <div>

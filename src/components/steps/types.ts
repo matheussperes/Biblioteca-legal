@@ -13,6 +13,8 @@ export interface DocumentDetail {
     engine?: string;
     durationMs?: number;
     warnings?: string[];
+    ocrPages?: number[];
+    figuresDetected?: number;
   } | null;
   cleaningStats: {
     charsBefore: number;
@@ -30,6 +32,7 @@ export interface DocumentDetail {
     articles: number;
     chunks: number;
     embeddings: number;
+    figures: number;
   };
 }
 

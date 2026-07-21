@@ -66,6 +66,7 @@ model Document {
   alineas    Alinea[]
   chunks     Chunk[]
   embeddings Embedding[]
+  figures    DocumentFigure[]
   logs       PipelineLog[]
   jobs       ProcessingJob[]
 
@@ -142,6 +143,7 @@ model Article {
   paragraphs Paragraph[]
   incisos    Inciso[]
   chunks     Chunk[]
+  figures    DocumentFigure[]
 
   @@index([documentId])
   @@map("articles")
@@ -228,9 +230,38 @@ model Chunk {
   createdAt DateTime   @default(now())
   embedding Embedding?
   retrievals Retrieval[]
+  figures    DocumentFigure[]
 
   @@index([documentId, index])
   @@map("chunks")
+}
+
+// ---------------------------------------------------------------------------
+// Etapa 2 — Figuras extraídas de documentos (OCR/Vision — Step 1)
+// ---------------------------------------------------------------------------
+
+model DocumentFigure {
+  id         String   @id @default(cuid())
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  page       Int // número da página de origem (1-based)
+  index      Int // ordem da figura dentro da página
+  imageBase64 String  @db.Text // data URL (image/png;base64,...) da figura recortada
+  width      Int?
+  height     Int?
+  description String? @db.Text // descrição gerada pela Vision API
+  ocrText    String?  @db.Text // texto detectado dentro da própria figura, se houver
+
+  articleId String?
+  article   Article? @relation(fields: [articleId], references: [id], onDelete: SetNull)
+  chunkId   String?
+  chunk     Chunk?   @relation(fields: [chunkId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([documentId, page])
+  @@index([articleId])
+  @@map("document_figures")
 }
 
 // ---------------------------------------------------------------------------

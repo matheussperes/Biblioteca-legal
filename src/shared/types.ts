@@ -69,6 +69,25 @@ export interface TreeNode {
   children: TreeNode[];
 }
 
+/** Intervalo de caracteres de uma página dentro do texto extraído concatenado (Step 1) */
+export interface PageOffset {
+  page: number;
+  start: number;
+  end: number;
+}
+
+/** Figura detectada e recortada de uma página (Step 1 — OCR/Vision) */
+export interface FigureDraft {
+  page: number;
+  index: number;
+  /** data URL "data:image/png;base64,..." */
+  imageBase64: string;
+  width: number;
+  height: number;
+  description: string;
+  ocrText: string;
+}
+
 /** Resultado da extração (Step 1) */
 export interface ExtractionResult {
   text: string;
@@ -77,7 +96,11 @@ export interface ExtractionResult {
     warnings?: string[];
     engine: string;
     durationMs: number;
+    pageOffsets?: PageOffset[];
+    ocrPages?: number[];
+    figuresDetected?: number;
   };
+  figures?: FigureDraft[];
 }
 
 /** Estatísticas da limpeza (Step 2) */

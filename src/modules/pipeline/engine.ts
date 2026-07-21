@@ -8,6 +8,7 @@ import {
   type PipelineStatusValue,
   type StructuralToken,
   type TreeNode,
+  type PageOffset,
 } from "@/shared/types";
 import { mergeConfig, type PipelineConfig } from "@/shared/config";
 import { extractText } from "@/modules/extraction";
@@ -23,6 +24,7 @@ import { chunkArticles } from "@/modules/chunking";
 import { enrichText } from "@/modules/enrichment";
 import { generateEmbeddings } from "@/modules/embeddings";
 import { storeVector, indexDocument } from "@/modules/vector-index";
+import { locateArticlePages, assignFiguresToArticles } from "./figure-linking";
 
 // ---------------------------------------------------------------------------
 // Pipeline Engine.
@@ -172,7 +174,7 @@ async function executeStep(
 ): Promise<Record<string, unknown>> {
   switch (step) {
     case "EXTRACTION":
-      return stepExtraction(documentId);
+      return stepExtraction(documentId, config);
     case "CLEANING":
       return stepCleaning(documentId);
     case "TOKENIZATION":
@@ -192,17 +194,20 @@ async function executeStep(
   }
 }
 
-async function stepExtraction(documentId: string) {
+async function stepExtraction(documentId: string, config: PipelineConfig) {
   const document = await prisma.document.findUniqueOrThrow({
     where: { id: documentId },
   });
-  const result = await extractText({
-    type: document.type,
-    buffer: document.originalContent
-      ? Buffer.from(document.originalContent)
-      : undefined,
-    pastedText: document.pastedText ?? undefined,
-  });
+  const result = await extractText(
+    {
+      type: document.type,
+      buffer: document.originalContent
+        ? Buffer.from(document.originalContent)
+        : undefined,
+      pastedText: document.pastedText ?? undefined,
+    },
+    config.ocr
+  );
 
   await prisma.document.update({
     where: { id: documentId },
@@ -216,8 +221,33 @@ async function stepExtraction(documentId: string) {
   });
   await invalidateFrom(documentId, "TOKENIZATION");
 
+  // Etapa 2 — figuras extraídas via OCR/Vision (regravadas a cada execução do step)
+  await prisma.documentFigure.deleteMany({ where: { documentId } });
+  const figures = result.figures ?? [];
+  if (figures.length > 0) {
+    await prisma.documentFigure.createMany({
+      data: figures.map((f) => ({
+        documentId,
+        page: f.page,
+        index: f.index,
+        imageBase64: f.imageBase64,
+        width: f.width,
+        height: f.height,
+        description: f.description || null,
+        ocrText: f.ocrText || null,
+      })),
+    });
+  }
+
   for (const warning of result.meta.warnings ?? []) {
     await log(documentId, "EXTRACTION", warning, "warn");
+  }
+  if (figures.length > 0) {
+    await log(
+      documentId,
+      "EXTRACTION",
+      `${figures.length} figura(s) detectada(s) e recortada(s) via Vision API.`
+    );
   }
 
   return {
@@ -225,6 +255,8 @@ async function stepExtraction(documentId: string) {
     paginas: result.meta.pages,
     engine: result.meta.engine,
     duracao_ms: result.meta.durationMs,
+    figuras_detectadas: figures.length,
+    paginas_ocr: result.meta.ocrPages?.length ?? 0,
   };
 }
 
@@ -517,6 +549,7 @@ async function stepChunking(documentId: string, config: PipelineConfig) {
 
   const articles = await prisma.article.findMany({
     where: { documentId },
+    orderBy: { index: "asc" },
     select: { id: true, number: true },
   });
   const articleIdByNumber = new Map(articles.map((a) => [a.number, a.id]));
@@ -543,12 +576,71 @@ async function stepChunking(documentId: string, config: PipelineConfig) {
   }
   await invalidateFrom(documentId, "EMBEDDINGS");
 
+  const figuresLinked = await linkFiguresToArticles(documentId, document, articles);
+
   await log(documentId, "CHUNKING", `${drafts.length} chunks criados.`);
+  if (figuresLinked > 0) {
+    await log(
+      documentId,
+      "CHUNKING",
+      `${figuresLinked} figura(s) vinculada(s) ao artigo/chunk da mesma página.`
+    );
+  }
   return {
     chunks: drafts.length,
     max_tokens: config.chunking.maxTokens,
     estrategia: config.chunking.strategy,
+    figuras_vinculadas: figuresLinked,
   };
+}
+
+/**
+ * Etapa 2/3 — vincula as figuras extraídas no Step 1 ao artigo (e ao seu
+ * primeiro chunk) cuja página de origem coincide com a da figura.
+ */
+async function linkFiguresToArticles(
+  documentId: string,
+  document: { extractedText: string | null; extractionMeta: Prisma.JsonValue },
+  articles: Array<{ id: string; number: string }>
+): Promise<number> {
+  const pageOffsets =
+    (document.extractionMeta as { pageOffsets?: PageOffset[] } | null)?.pageOffsets ?? [];
+  if (!document.extractedText || pageOffsets.length === 0) return 0;
+
+  const figures = await prisma.documentFigure.findMany({
+    where: { documentId },
+    select: { id: true, page: true },
+  });
+  if (figures.length === 0) return 0;
+
+  const articleLocations = locateArticlePages(
+    document.extractedText,
+    articles.map((a) => ({ articleId: a.id, number: a.number })),
+    pageOffsets
+  );
+  const assignment = assignFiguresToArticles(figures, articleLocations);
+
+  const firstPartChunks = await prisma.chunk.findMany({
+    where: { documentId, part: 1, articleId: { not: null } },
+    select: { id: true, articleId: true },
+  });
+  const chunkByArticle = new Map(
+    firstPartChunks.map((c) => [c.articleId as string, c.id])
+  );
+
+  let linked = 0;
+  for (const figure of figures) {
+    const articleId = assignment.get(figure.id) ?? null;
+    await prisma.documentFigure.update({
+      where: { id: figure.id },
+      data: {
+        articleId,
+        chunkId: articleId ? chunkByArticle.get(articleId) ?? null : null,
+      },
+    });
+    if (articleId) linked += 1;
+  }
+  return linked;
 }
 
 async function stepEnrichment(documentId: string, config: PipelineConfig) {

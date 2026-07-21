@@ -31,6 +31,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
           articles: true,
           chunks: true,
           embeddings: true,
+          figures: true,
         },
       },
     },

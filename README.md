@@ -26,6 +26,14 @@ Qualquer etapa pode ser reexecutada isoladamente (ex.: alterou um regex →
 refaça a Tokenização); os artefatos posteriores são invalidados automaticamente
 e o status retrocede, sem repetir o upload.
 
+**OCR e figuras (PDF):** no Step 1, páginas de PDF sem camada de texto
+(digitalizadas) são transcritas via Vision API, e figuras não textuais
+(mapas, plantas, diagramas) são detectadas, recortadas e descritas
+automaticamente — armazenadas em `DocumentFigure`. No Step 6, cada figura é
+vinculada ao artigo/chunk da mesma página; o Visualizador Jurídico (Fase 2)
+exibe essas figuras junto ao texto do artigo. Configurável em
+Configurações → OCR / Visão (requer `OPENAI_API_KEY`).
+
 ## Fase 2 — Motor RAG para Legislação Urbanística
 
 Fluxo de cada pergunta, com rastreabilidade completa persistida em banco:
@@ -104,7 +112,7 @@ npx tsx scripts/smoke-test-rag.ts    # Motor RAG Fase 2 contra o banco real (req
 src/
   modules/                # cada módulo expõe interface pública e é independente
     ingestion/             # Fase 1 — Tela 1 — upload / texto colado
-    extraction/             # Fase 1 — Step 1 — pdf-parse, mammoth, html-to-text
+    extraction/             # Fase 1 — Step 1 — pdfjs-dist (+ OCR/Vision), mammoth, html-to-text
     cleaning/                # Fase 1 — Step 2 — normalização
     tokenizer/                # Fase 1 — Step 3 — lexer de tokens estruturais
     parser/                    # Fase 1 — Step 4 — árvore hierárquica por pilha

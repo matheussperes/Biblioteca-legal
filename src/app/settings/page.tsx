@@ -248,6 +248,119 @@ export default function SettingsPage() {
 
       <Card>
         <CardHeader>
+          <CardTitle>OCR / Visão — Figuras (Step 1)</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <label className="flex items-center gap-2 text-sm text-zinc-700">
+            <input
+              type="checkbox"
+              checked={config.ocr.enabled}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  ocr: { ...config.ocr, enabled: e.target.checked },
+                })
+              }
+            />
+            Habilitar OCR via Vision API para PDFs escaneados e detecção de figuras
+          </label>
+          <p className="text-xs text-zinc-500">
+            Substitui a extração de texto apenas nas páginas sem camada de texto
+            (digitalizadas) e recorta figuras (mapas, plantas, diagramas) das
+            páginas que contêm imagens embutidas. Requer OPENAI_API_KEY.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div>
+              <label className="mb-1 block text-sm text-zinc-600">Modelo (visão)</label>
+              <Input
+                value={config.ocr.model}
+                onChange={(e) =>
+                  setConfig({ ...config, ocr: { ...config.ocr, model: e.target.value } })
+                }
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm text-zinc-600">
+                Máx. páginas processadas
+              </label>
+              <Input
+                type="number"
+                value={config.ocr.maxPages}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    ocr: { ...config.ocr, maxPages: Number(e.target.value) },
+                  })
+                }
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm text-zinc-600">
+                Máx. figuras por documento
+              </label>
+              <Input
+                type="number"
+                value={config.ocr.maxFigures}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    ocr: { ...config.ocr, maxFigures: Number(e.target.value) },
+                  })
+                }
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm text-zinc-600">
+                Largura mínima da figura (px)
+              </label>
+              <Input
+                type="number"
+                value={config.ocr.minFigureWidth}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    ocr: { ...config.ocr, minFigureWidth: Number(e.target.value) },
+                  })
+                }
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm text-zinc-600">
+                Altura mínima da figura (px)
+              </label>
+              <Input
+                type="number"
+                value={config.ocr.minFigureHeight}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    ocr: { ...config.ocr, minFigureHeight: Number(e.target.value) },
+                  })
+                }
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm text-zinc-600">
+                Escala de renderização
+              </label>
+              <Input
+                type="number"
+                step="0.1"
+                value={config.ocr.renderScale}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    ocr: { ...config.ocr, renderScale: Number(e.target.value) },
+                  })
+                }
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Modelo de Embedding</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-2">

@@ -1,12 +1,28 @@
 "use client";
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui";
+import { useCallback, useEffect, useState } from "react";
+import { Badge, Card, CardContent, CardHeader, CardTitle } from "@/components/ui";
+import { FigureGrid, type FigureRow } from "@/components/FigureGrid";
 import { RunBar } from "./RunBar";
 import type { StepPanelProps } from "./types";
 
-/** Step 1 — Extração: documento à esquerda, texto extraído à direita. */
+function useFigures(documentId: string, refreshKey: string) {
+  const [figures, setFigures] = useState<FigureRow[]>([]);
+  const load = useCallback(async () => {
+    const res = await fetch(`/api/documents/${documentId}/figures`);
+    if (res.ok) setFigures(await res.json());
+  }, [documentId]);
+  useEffect(() => {
+    load();
+  }, [load, refreshKey]);
+  return figures;
+}
+
+/** Step 1 — Extração: documento à esquerda, texto extraído à direita; OCR e figuras (Etapa 2) abaixo. */
 export function ExtractionPanel({ document, running, onRun }: StepPanelProps) {
   const done = document.extractedText != null;
+  const figures = useFigures(document.id, `${document.status}-${document._count.figures}`);
+  const ocrPages = document.extractionMeta?.ocrPages ?? [];
 
   return (
     <div className="space-y-4">
@@ -45,6 +61,19 @@ export function ExtractionPanel({ document, running, onRun }: StepPanelProps) {
                   <span className="text-zinc-500">Duração:</span>{" "}
                   {document.extractionMeta.durationMs} ms
                 </div>
+                {ocrPages.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1">
+                    <Badge variant="success">OCR via Vision</Badge>
+                    <span className="text-xs text-zinc-500">
+                      {ocrPages.length} página(s) digitalizada(s) transcrita(s)
+                    </span>
+                  </div>
+                )}
+                {figures.length > 0 && (
+                  <div>
+                    <Badge variant="outline">{figures.length} figura(s) detectada(s)</Badge>
+                  </div>
+                )}
                 {(document.extractionMeta.warnings ?? []).map((w, i) => (
                   <div
                     key={i}
@@ -75,6 +104,17 @@ export function ExtractionPanel({ document, running, onRun }: StepPanelProps) {
           </CardContent>
         </Card>
       </div>
+
+      {figures.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Figuras extraídas</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <FigureGrid figures={figures} />
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

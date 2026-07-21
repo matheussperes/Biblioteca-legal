@@ -42,11 +42,31 @@ export interface EmbeddingsConfig {
   batchSize: number;
 }
 
+export interface OcrConfig {
+  /** liga/desliga OCR via Vision e a extração de figuras no Step 1 */
+  enabled: boolean;
+  /** modelo com suporte a visão (ex.: gpt-4o-mini, gpt-4o) */
+  model: string;
+  temperature: number;
+  /** limite de páginas renderizadas por documento — protege custo/tempo */
+  maxPages: number;
+  /** limite de figuras persistidas por documento */
+  maxFigures: number;
+  /** dimensões mínimas (px) para uma figura recortada ser mantida (descarta ícones/ruído) */
+  minFigureWidth: number;
+  minFigureHeight: number;
+  /** escala de renderização da página (proporcional à resolução da imagem) */
+  renderScale: number;
+  ocrPrompt: string;
+  figuresPrompt: string;
+}
+
 export interface PipelineConfig {
   regex: RegexConfig;
   chunking: ChunkingConfig;
   enrichment: EnrichmentConfig;
   embeddings: EmbeddingsConfig;
+  ocr: OcrConfig;
 }
 
 export const DEFAULT_ENRICHMENT_PROMPT = `Você é um especialista em análise de documentos legislativos brasileiros.
@@ -72,6 +92,33 @@ Texto:
 {{TEXTO}}
 """
 
+Responda APENAS com o JSON, sem texto adicional.`;
+
+/** Página sem camada de texto (PDF escaneado) — transcrição via OCR + figuras. */
+export const DEFAULT_OCR_PROMPT = `Você está vendo a imagem de uma página digitalizada de um documento legislativo brasileiro (a página não possui texto extraível — é uma imagem).
+
+Produza um JSON com exatamente estas chaves:
+
+- "texto": transcrição completa e fiel do texto da página, preservando a ordem de leitura, números de artigo, parágrafos, incisos e alíneas. Não resuma nem corrija o conteúdo.
+- "figuras": lista de figuras não textuais presentes na página (mapas, plantas, tabelas com desenhos, gráficos, diagramas, selos, brasões, fotografias). Ignore blocos que sejam apenas texto corrido. Para cada figura, informe:
+  - "descricao": descrição objetiva do conteúdo da figura (2-3 frases)
+  - "bbox": posição aproximada da figura na página, como [x0, y0, x1, y1] em porcentagem (0 a 100) da largura/altura da página
+  - "texto_na_figura": texto legível dentro da própria figura (legendas, rótulos, valores), string vazia se não houver
+
+Se não houver nenhuma figura, retorne "figuras": [].
+Responda APENAS com o JSON, sem texto adicional.`;
+
+/** Página com camada de texto — apenas detecção/descrição de figuras embutidas. */
+export const DEFAULT_FIGURES_PROMPT = `Você está vendo a imagem de uma página de um documento legislativo brasileiro. Esta página já possui texto extraído por outro processo — ignore o texto corrido e concentre-se apenas em elementos visuais não textuais.
+
+Produza um JSON com exatamente esta chave:
+
+- "figuras": lista de figuras não textuais presentes na página (mapas, plantas, tabelas com desenhos, gráficos, diagramas, selos, brasões, fotografias). Ignore blocos que sejam apenas texto corrido ou tabelas puramente textuais. Para cada figura, informe:
+  - "descricao": descrição objetiva do conteúdo da figura (2-3 frases)
+  - "bbox": posição aproximada da figura na página, como [x0, y0, x1, y1] em porcentagem (0 a 100) da largura/altura da página
+  - "texto_na_figura": texto legível dentro da própria figura (legendas, rótulos, valores), string vazia se não houver
+
+Se não houver nenhuma figura, retorne "figuras": [].
 Responda APENAS com o JSON, sem texto adicional.`;
 
 export const DEFAULT_CONFIG: PipelineConfig = {
@@ -108,6 +155,18 @@ export const DEFAULT_CONFIG: PipelineConfig = {
     dimension: 1536,
     batchSize: 64,
   },
+  ocr: {
+    enabled: true,
+    model: "gpt-4o-mini",
+    temperature: 0,
+    maxPages: 80,
+    maxFigures: 60,
+    minFigureWidth: 60,
+    minFigureHeight: 60,
+    renderScale: 1.5,
+    ocrPrompt: DEFAULT_OCR_PROMPT,
+    figuresPrompt: DEFAULT_FIGURES_PROMPT,
+  },
 };
 
 /** Preços aproximados (USD por 1M tokens) para estimativa de custo do Step 7/8. */
@@ -139,5 +198,6 @@ export function mergeConfig(partial: unknown): PipelineConfig {
     chunking: { ...DEFAULT_CONFIG.chunking, ...(p.chunking ?? {}) },
     enrichment: { ...DEFAULT_CONFIG.enrichment, ...(p.enrichment ?? {}) },
     embeddings: { ...DEFAULT_CONFIG.embeddings, ...(p.embeddings ?? {}) },
+    ocr: { ...DEFAULT_CONFIG.ocr, ...(p.ocr ?? {}) },
   };
 }
