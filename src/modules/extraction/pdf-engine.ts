@@ -138,18 +138,33 @@ export async function extractPdf(
   visionClient?: VisionClient
 ): Promise<PdfExtractionResult> {
   const warnings: string[] = [];
-  const { pdfjsLib, canvas } = await loadPdfjs();
-  const pkgDir = path.dirname(require.resolve("pdfjs-dist/package.json"));
 
-  const doc = await pdfjsLib.getDocument({
-    data: new Uint8Array(buffer),
-    isEvalSupported: false,
-    useSystemFonts: false,
-    disableFontFace: true,
-    standardFontDataUrl: path.join(pkgDir, "standard_fonts") + "/",
-    cMapUrl: path.join(pkgDir, "cmaps") + "/",
-    cMapPacked: true,
-  }).promise;
+  let pdfjsLib: Awaited<ReturnType<typeof loadPdfjs>>["pdfjsLib"];
+  let canvas: Awaited<ReturnType<typeof loadPdfjs>>["canvas"];
+  let pkgDir: string;
+  try {
+    ({ pdfjsLib, canvas } = await loadPdfjs());
+    pkgDir = path.dirname(require.resolve("pdfjs-dist/package.json"));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`[setup] Falha ao carregar pdfjs-dist/@napi-rs/canvas: ${message}`);
+  }
+
+  let doc: Awaited<ReturnType<typeof pdfjsLib.getDocument>["promise"]>;
+  try {
+    doc = await pdfjsLib.getDocument({
+      data: new Uint8Array(buffer),
+      isEvalSupported: false,
+      useSystemFonts: false,
+      disableFontFace: true,
+      standardFontDataUrl: path.join(pkgDir, "standard_fonts") + "/",
+      cMapUrl: path.join(pkgDir, "cmaps") + "/",
+      cMapPacked: true,
+    }).promise;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`[getDocument] Falha ao carregar o PDF (${buffer.length} bytes): ${message}`);
+  }
 
   const totalPages = doc.numPages;
   const pagesToProcess = Math.min(totalPages, Math.max(1, config.maxPages));
