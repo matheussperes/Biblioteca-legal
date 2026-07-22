@@ -174,87 +174,96 @@ export async function extractPdf(
   let cursor = 0;
 
   for (let pageNumber = 1; pageNumber <= pagesToProcess; pageNumber++) {
-    const page = await doc.getPage(pageNumber);
+    let pageText = "";
+    try {
+      const page = await doc.getPage(pageNumber);
 
-    const textContent = await page.getTextContent();
-    let pageText = joinTextContentLines(textContent.items);
-    const isScanned = pageText.trim().length < 20;
+      const textContent = await page.getTextContent();
+      pageText = joinTextContentLines(textContent.items);
+      const isScanned = pageText.trim().length < 20;
 
-    let hasEmbeddedImage = false;
-    if (client && figures.length < config.maxFigures) {
-      const opList = await page.getOperatorList();
-      hasEmbeddedImage = opList.fnArray.includes(pdfjsLib.OPS.paintImageXObject);
-    }
-
-    const needsRender =
-      client && (isScanned || (hasEmbeddedImage && figures.length < config.maxFigures));
-
-    if (needsRender && client) {
-      try {
-        const viewport = page.getViewport({ scale: config.renderScale });
-        const renderCanvas = canvas.createCanvas(
-          Math.ceil(viewport.width),
-          Math.ceil(viewport.height)
-        );
-        const ctx = renderCanvas.getContext("2d");
-        await page.render({
-          canvasContext: ctx as unknown as CanvasRenderingContext2D,
-          viewport,
-        }).promise;
-        const pageBuffer = renderCanvas.toBuffer("image/png");
-        const pageDataUrl = `data:image/png;base64,${pageBuffer.toString("base64")}`;
-
-        const prompt = isScanned ? config.ocrPrompt : config.figuresPrompt;
-        const model = config.model;
-        const result = await callVision(
-          client,
-          model,
-          config.temperature,
-          prompt,
-          pageDataUrl
-        );
-
-        if (isScanned) {
-          pageText = result.texto ?? pageText;
-          ocrPages.push(pageNumber);
-        }
-
-        let figureIndex = 0;
-        for (const f of result.figuras) {
-          if (figures.length >= config.maxFigures) break;
-          const [x0, y0, x1, y1] = f.bbox;
-          const sx = Math.round((x0 / 100) * renderCanvas.width);
-          const sy = Math.round((y0 / 100) * renderCanvas.height);
-          const sw = Math.round(((x1 - x0) / 100) * renderCanvas.width);
-          const sh = Math.round(((y1 - y0) / 100) * renderCanvas.height);
-          if (sw < config.minFigureWidth || sh < config.minFigureHeight) continue;
-
-          const cropCanvas = canvas.createCanvas(sw, sh);
-          const cropCtx = cropCanvas.getContext("2d");
-          const sourceImage = await canvas.loadImage(pageBuffer);
-          cropCtx.drawImage(sourceImage, sx, sy, sw, sh, 0, 0, sw, sh);
-          const cropBuffer = cropCanvas.toBuffer("image/png");
-
-          figures.push({
-            page: pageNumber,
-            index: figureIndex++,
-            imageBase64: `data:image/png;base64,${cropBuffer.toString("base64")}`,
-            width: sw,
-            height: sh,
-            description: f.descricao,
-            ocrText: f.texto_na_figura,
-          });
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        warnings.push(`Página ${pageNumber}: falha ao chamar Vision API (${message}).`);
+      let hasEmbeddedImage = false;
+      if (client && figures.length < config.maxFigures) {
+        const opList = await page.getOperatorList();
+        hasEmbeddedImage = opList.fnArray.includes(pdfjsLib.OPS.paintImageXObject);
       }
-    }
 
-    if (isScanned && pageText.trim().length === 0) {
-      warnings.push(
-        `Página ${pageNumber} parece digitalizada e não foi possível extrair texto via OCR.`
-      );
+      const needsRender =
+        client && (isScanned || (hasEmbeddedImage && figures.length < config.maxFigures));
+
+      if (needsRender && client) {
+        try {
+          const viewport = page.getViewport({ scale: config.renderScale });
+          const renderCanvas = canvas.createCanvas(
+            Math.ceil(viewport.width),
+            Math.ceil(viewport.height)
+          );
+          const ctx = renderCanvas.getContext("2d");
+          await page.render({
+            canvasContext: ctx as unknown as CanvasRenderingContext2D,
+            viewport,
+          }).promise;
+          const pageBuffer = renderCanvas.toBuffer("image/png");
+          const pageDataUrl = `data:image/png;base64,${pageBuffer.toString("base64")}`;
+
+          const prompt = isScanned ? config.ocrPrompt : config.figuresPrompt;
+          const model = config.model;
+          const result = await callVision(
+            client,
+            model,
+            config.temperature,
+            prompt,
+            pageDataUrl
+          );
+
+          if (isScanned) {
+            pageText = result.texto ?? pageText;
+            ocrPages.push(pageNumber);
+          }
+
+          let figureIndex = 0;
+          for (const f of result.figuras) {
+            if (figures.length >= config.maxFigures) break;
+            const [x0, y0, x1, y1] = f.bbox;
+            const sx = Math.round((x0 / 100) * renderCanvas.width);
+            const sy = Math.round((y0 / 100) * renderCanvas.height);
+            const sw = Math.round(((x1 - x0) / 100) * renderCanvas.width);
+            const sh = Math.round(((y1 - y0) / 100) * renderCanvas.height);
+            if (sw < config.minFigureWidth || sh < config.minFigureHeight) continue;
+
+            const cropCanvas = canvas.createCanvas(sw, sh);
+            const cropCtx = cropCanvas.getContext("2d");
+            const sourceImage = await canvas.loadImage(pageBuffer);
+            cropCtx.drawImage(sourceImage, sx, sy, sw, sh, 0, 0, sw, sh);
+            const cropBuffer = cropCanvas.toBuffer("image/png");
+
+            figures.push({
+              page: pageNumber,
+              index: figureIndex++,
+              imageBase64: `data:image/png;base64,${cropBuffer.toString("base64")}`,
+              width: sw,
+              height: sh,
+              description: f.descricao,
+              ocrText: f.texto_na_figura,
+            });
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          warnings.push(`Página ${pageNumber}: falha ao chamar Vision API (${message}).`);
+        }
+      }
+
+      if (isScanned && pageText.trim().length === 0) {
+        warnings.push(
+          `Página ${pageNumber} parece digitalizada e não foi possível extrair texto via OCR.`
+        );
+      }
+    } catch (error) {
+      // Falha ao interpretar a página em si (ex.: recurso de fonte/cmap do
+      // pdfjs) não pode derrubar a extração do documento inteiro — pula a
+      // página com um aviso em vez de abortar tudo.
+      const message = error instanceof Error ? error.message : String(error);
+      warnings.push(`Página ${pageNumber}: falha ao processar a página (${message}).`);
     }
 
     pageTexts.push(pageText);
