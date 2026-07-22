@@ -10,8 +10,11 @@ import type { StepPanelProps } from "./types";
  * Step 7 — Enriquecimento IA: mostra por chunk o prompt enviado, a resposta,
  * o tempo e o custo estimado, com botão para executar novamente.
  */
-export function EnrichmentPanel({ document: doc, running, onRun }: StepPanelProps) {
-  const chunks = useChunks(doc.id, `${doc.status}-enrichment`);
+export function EnrichmentPanel({ document: doc, running, onRun, refreshTick }: StepPanelProps) {
+  // `refreshTick` (não `doc.status`) garante que a lista recarregue a cada
+  // lote do Step 7, já que o status só avança quando todos os chunks
+  // terminam — em documentos grandes isso pode levar vários lotes.
+  const chunks = useChunks(doc.id, `enrichment-${refreshTick}`);
   const enriched = chunks.filter((c) => c.enrichment != null);
   const done = enriched.length > 0;
   const [open, setOpen] = useState<string | null>(null);

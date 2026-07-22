@@ -52,10 +52,12 @@ export default function DocumentPage({
   const [active, setActive] = useState<string>("extraction");
   const [running, setRunning] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/documents/${id}`);
     if (res.ok) setDoc(await res.json());
+    setRefreshTick((t) => t + 1);
   }, [id]);
 
   useEffect(() => {
@@ -76,12 +78,38 @@ export default function DocumentPage({
     setRunning(stepId);
     setError(null);
     try {
-      const res = await fetch(
-        `/api/documents/${id}/steps/${stepId}${cascade ? "?cascade=true" : ""}`,
-        { method: "POST" }
-      );
-      const data = await res.json();
-      if (!res.ok) setError(data.error ?? "Falha ao executar o step.");
+      // Alguns steps (ex.: Enriquecimento IA em documentos grandes) processam
+      // em lotes para caber no limite de execução da função serverless e
+      // retornam `partial: true` quando ainda restam itens. Continua
+      // reexecutando automaticamente até o step terminar de fato, sem exigir
+      // cliques repetidos — desde que cada lote tenha feito progresso.
+      let keepGoing = true;
+      while (keepGoing) {
+        const res = await fetch(
+          `/api/documents/${id}/steps/${stepId}${cascade ? "?cascade=true" : ""}`,
+          { method: "POST" }
+        );
+        const data = await res.json();
+        if (!res.ok) {
+          setError(data.error ?? "Falha ao executar o step.");
+          break;
+        }
+        await load();
+
+        const results = Array.isArray(data.result) ? data.result : [data.result];
+        const last = results[results.length - 1];
+        const progressed = (last?.meta?.chunks_enriquecidos ?? 0) > 0;
+
+        if (last?.partial && progressed) {
+          continue; // próximo lote
+        }
+        if (last?.partial && !progressed) {
+          setError(
+            "A execução parou sem processar nenhum item neste lote — tente novamente."
+          );
+        }
+        keepGoing = false;
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -105,6 +133,7 @@ export default function DocumentPage({
     running: running === stepId,
     onRun: () => runStep(stepId),
     onReload: load,
+    refreshTick,
   });
 
   return (

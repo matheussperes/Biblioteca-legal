@@ -123,13 +123,22 @@ export async function runStep(documentId: string, step: PipelineStep) {
   try {
     const meta = await executeStep(documentId, step, config);
 
-    // Reprocessamento: se o documento estava além deste step, o status
-    // retrocede para o resultado do step refeito (artefatos posteriores
-    // já foram invalidados por executeStep).
-    await prisma.document.update({
-      where: { id: documentId },
-      data: { status: STEP_RESULT_STATUS[step] },
-    });
+    // Alguns steps processam em lotes (ex.: Enriquecimento IA, para caber no
+    // limite de execução da função serverless) e sinalizam `concluido: false`
+    // quando ainda restam itens — nesse caso o status do documento não avança,
+    // para que o pipeline não libere o próximo step antes da hora e para que
+    // a UI saiba reexecutar este mesmo step para continuar.
+    const partial = (meta as { concluido?: boolean }).concluido === false;
+
+    if (!partial) {
+      // Reprocessamento: se o documento estava além deste step, o status
+      // retrocede para o resultado do step refeito (artefatos posteriores
+      // já foram invalidados por executeStep).
+      await prisma.document.update({
+        where: { id: documentId },
+        data: { status: STEP_RESULT_STATUS[step] },
+      });
+    }
 
     await prisma.processingJob.update({
       where: { id: job.id },
@@ -139,9 +148,17 @@ export async function runStep(documentId: string, step: PipelineStep) {
         meta: meta as Prisma.InputJsonValue,
       },
     });
-    await log(documentId, step, `${STEP_LABELS[step]} concluído.`, "info", meta);
+    await log(
+      documentId,
+      step,
+      partial
+        ? `${STEP_LABELS[step]} — lote concluído, execução parcial.`
+        : `${STEP_LABELS[step]} concluído.`,
+      "info",
+      meta
+    );
 
-    return { ok: true as const, step, meta };
+    return { ok: true as const, step, meta, partial };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await prisma.processingJob.update({
@@ -153,12 +170,18 @@ export async function runStep(documentId: string, step: PipelineStep) {
   }
 }
 
-/** Executa todos os steps a partir de `from` (inclusive) até o fim. */
+/**
+ * Executa todos os steps a partir de `from` (inclusive) até o fim.
+ * Para na hora se um step retornar execução parcial (lote) — o status do
+ * documento não avançou, então reexecutar a cascata depois retoma daqui.
+ */
 export async function runPipelineFrom(documentId: string, from: PipelineStep) {
   const startIndex = PIPELINE_STEPS.indexOf(from);
   const results = [];
   for (const step of PIPELINE_STEPS.slice(startIndex)) {
-    results.push(await runStep(documentId, step));
+    const result = await runStep(documentId, step);
+    results.push(result);
+    if (result.partial) break;
   }
   return results;
 }
@@ -643,6 +666,14 @@ async function linkFiguresToArticles(
   return linked;
 }
 
+/**
+ * Orçamento de tempo por invocação — deixa margem sob o limite de execução
+ * da função serverless (maxDuration=300s na rota). Quando o orçamento é
+ * atingido, o step para de forma controlada e sinaliza `concluido: false`;
+ * `runStep` mantém o status do documento inalterado até o lote final.
+ */
+const ENRICHMENT_TIME_BUDGET_MS = 45_000;
+
 async function stepEnrichment(documentId: string, config: PipelineConfig) {
   const chunks = await prisma.chunk.findMany({
     where: { documentId },
@@ -652,10 +683,23 @@ async function stepEnrichment(documentId: string, config: PipelineConfig) {
     throw new Error("Chunks não encontrados — execute a Chunkização.");
   }
 
+  // Retomável: só reprocessa chunks sem enriquecimento ou enriquecidos com
+  // um modelo diferente do configurado — evita reprocessar (e recobrar) o
+  // que já foi feito em lotes anteriores.
+  const pending = chunks.filter(
+    (c) => !c.enrichment || c.enrichmentModel !== config.enrichment.model
+  );
+
+  const start = Date.now();
   let enriched = 0;
   let totalCost = 0;
+  let truncated = false;
 
-  for (const chunk of chunks) {
+  for (const chunk of pending) {
+    if (Date.now() - start > ENRICHMENT_TIME_BUDGET_MS) {
+      truncated = true;
+      break;
+    }
     const contexto = [chunk.originChapter, chunk.originSection, chunk.originArticle]
       .filter(Boolean)
       .join(" > ");
@@ -681,10 +725,24 @@ async function stepEnrichment(documentId: string, config: PipelineConfig) {
     );
   }
 
+  const remaining = pending.length - enriched;
+  const concluido = remaining === 0;
+  if (!concluido) {
+    await log(
+      documentId,
+      "ENRICHMENT",
+      `Lote parcial: ${enriched} chunk(s) processado(s) neste lote (orçamento de tempo${truncated ? " atingido" : ""}), ${remaining} restante(s) — execute novamente para continuar.`,
+      "warn"
+    );
+  }
+
   return {
     chunks_enriquecidos: enriched,
+    chunks_ja_prontos: chunks.length - pending.length,
+    chunks_restantes: remaining,
     modelo: config.enrichment.model,
     custo_estimado_usd: Number(totalCost.toFixed(6)),
+    concluido,
   };
 }
 

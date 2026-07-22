@@ -43,4 +43,10 @@ export interface StepPanelProps {
   onRun: () => Promise<void>;
   /** recarrega o documento sem executar nada */
   onReload: () => Promise<void>;
+  /**
+   * Incrementa a cada recarga do documento — inclusive durante execuções em
+   * lote (ex.: Enriquecimento IA), quando `document.status` ainda não mudou.
+   * Use como parte da chave de refresh de dados dependentes (chunks, etc.).
+   */
+  refreshTick: number;
 }
