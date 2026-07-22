@@ -16,6 +16,7 @@ import { EnrichmentPanel } from "@/components/steps/EnrichmentPanel";
 import { EmbeddingsPanel } from "@/components/steps/EmbeddingsPanel";
 import { IndexPanel } from "@/components/steps/IndexPanel";
 import { LogsPanel } from "@/components/steps/LogsPanel";
+import { readJson } from "@/shared/http-client";
 
 const STEPS = [
   { id: "extraction", label: "1. Extração", doneAt: "EXTRACTED" },
@@ -41,6 +42,13 @@ const STATUS_ORDER = [
   "EMBEDDED",
   "INDEXED",
 ];
+
+interface StepRunResult {
+  ok: boolean;
+  step: string;
+  partial?: boolean;
+  meta?: Record<string, unknown> & { chunks_enriquecidos?: number };
+}
 
 export default function DocumentPage({
   params,
@@ -83,20 +91,22 @@ export default function DocumentPage({
       // retornam `partial: true` quando ainda restam itens. Continua
       // reexecutando automaticamente até o step terminar de fato, sem exigir
       // cliques repetidos — desde que cada lote tenha feito progresso.
+      // `readJson` também cobre respostas de erro não-JSON (limite de corpo,
+      // timeout de função, página de erro da plataforma).
       let keepGoing = true;
       while (keepGoing) {
         const res = await fetch(
           `/api/documents/${id}/steps/${stepId}${cascade ? "?cascade=true" : ""}`,
           { method: "POST" }
         );
-        const data = await res.json();
-        if (!res.ok) {
-          setError(data.error ?? "Falha ao executar o step.");
-          break;
-        }
+        const data = await readJson<{
+          result?: StepRunResult | StepRunResult[];
+        }>(res);
         await load();
 
-        const results = Array.isArray(data.result) ? data.result : [data.result];
+        const results = Array.isArray(data.result)
+          ? data.result
+          : [data.result];
         const last = results[results.length - 1];
         const progressed = (last?.meta?.chunks_enriquecidos ?? 0) > 0;
 

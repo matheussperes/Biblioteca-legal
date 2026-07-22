@@ -13,8 +13,11 @@ import {
   Textarea,
   Spinner,
 } from "@/components/ui";
+import { readJson } from "@/shared/http-client";
 
 const ACCEPT = ".pdf,.docx,.txt,.html,.htm,.md,.markdown";
+// Limite do bucket "document-uploads" no Supabase Storage.
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 export default function UploadPage() {
   const router = useRouter();
@@ -26,14 +29,49 @@ export default function UploadPage() {
   const [pastedName, setPastedName] = useState("");
 
   const sendFile = async (file: File) => {
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setError(
+        `Arquivo muito grande (${(file.size / (1024 * 1024)).toFixed(1)} MB). O limite é de 100 MB.`
+      );
+      return;
+    }
     setSending(true);
     setError(null);
     try {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch("/api/documents", { method: "POST", body: form });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Falha no upload.");
+      // 1) pede uma URL assinada de upload (o navegador envia o arquivo
+      //    direto ao Supabase Storage — não passa pelo corpo desta rota).
+      const urlRes = await fetch("/api/documents/upload-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: file.name }),
+      });
+      const { path, signedUrl } = await readJson<{ path: string; signedUrl: string }>(
+        urlRes
+      );
+
+      // 2) envia o arquivo direto ao storage.
+      const putRes = await fetch(signedUrl, {
+        method: "PUT",
+        headers: { "Content-Type": file.type || "application/octet-stream" },
+        body: file,
+      });
+      if (!putRes.ok) {
+        throw new Error("Falha ao enviar o arquivo para o armazenamento.");
+      }
+
+      // 3) cria o documento referenciando o arquivo no storage (não baixa
+      //    os bytes de volta — o arquivo fica só no Supabase Storage).
+      const res = await fetch("/api/documents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          storagePath: path,
+          name: file.name,
+          mimeType: file.type,
+          sizeBytes: file.size,
+        }),
+      });
+      const data = await readJson<{ id: string }>(res);
       router.push(`/documents/${data.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -54,8 +92,7 @@ export default function UploadPage() {
           pastedText,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Falha ao salvar o texto.");
+      const data = await readJson<{ id: string }>(res);
       router.push(`/documents/${data.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

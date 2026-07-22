@@ -70,6 +70,21 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
+
+    // Arquivo já foi enviado direto ao Supabase Storage pelo navegador (ver
+    // /api/documents/upload-url) — fica armazenado só lá, não baixamos nem
+    // duplicamos os bytes no Postgres (isso é o que estourava a memória da
+    // function em uploads grandes, ~35 MB).
+    if (typeof body.storagePath === "string" && body.storagePath.trim()) {
+      const document = await createDocument({
+        name: body.name || "Documento",
+        mimeType: body.mimeType || undefined,
+        storagePath: body.storagePath,
+        sizeBytes: typeof body.sizeBytes === "number" ? body.sizeBytes : undefined,
+      });
+      return NextResponse.json(document, { status: 201 });
+    }
+
     if (typeof body.pastedText !== "string" || !body.pastedText.trim()) {
       return NextResponse.json(
         { error: "Campo 'pastedText' ausente ou vazio." },
