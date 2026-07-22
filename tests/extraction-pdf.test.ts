@@ -129,4 +129,61 @@ describe("Step 1 — Motor de PDF (pdfjs + OCR/Vision)", () => {
     expect(result.figures).toEqual([]);
     expect(result.warnings.some((w) => w.includes("digitalizada"))).toBe(true);
   });
+
+  it("tenta novamente em erro 429 (rate limit) e recupera a página", async () => {
+    let calls = 0;
+    const client: VisionClient = {
+      chat: {
+        completions: {
+          async create() {
+            calls += 1;
+            if (calls === 1) {
+              const err = new Error(
+                "429 Rate limit reached for gpt-4o-mini on tokens per min (TPM). Please try again in 1ms."
+              );
+              (err as unknown as { status: number }).status = 429;
+              throw err;
+            }
+            return {
+              choices: [
+                {
+                  message: {
+                    content: JSON.stringify({
+                      texto: "Texto recuperado após retry.",
+                      figuras: [],
+                    }),
+                  },
+                },
+              ],
+            };
+          },
+        },
+      },
+    };
+
+    const result = await extractPdf(buildBlankPdf(), DEFAULT_CONFIG.ocr, client);
+
+    expect(calls).toBe(2);
+    expect(result.text).toContain("Texto recuperado após retry.");
+    expect(result.warnings.some((w) => w.includes("Vision API"))).toBe(false);
+  });
+
+  it("não tenta novamente em erros que não são de rate limit", async () => {
+    let calls = 0;
+    const client: VisionClient = {
+      chat: {
+        completions: {
+          async create() {
+            calls += 1;
+            throw new Error("400 Bad Request: imagem inválida.");
+          },
+        },
+      },
+    };
+
+    const result = await extractPdf(buildBlankPdf(), DEFAULT_CONFIG.ocr, client);
+
+    expect(calls).toBe(1);
+    expect(result.warnings.some((w) => w.includes("Vision API"))).toBe(true);
+  });
 });

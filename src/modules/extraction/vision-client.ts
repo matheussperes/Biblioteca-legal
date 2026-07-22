@@ -35,6 +35,6 @@ export function getDefaultVisionClient(): VisionClient {
       "OPENAI_API_KEY não configurada — necessária para OCR/Vision no Step 1."
     );
   }
-  if (!defaultClient) defaultClient = new OpenAI();
+  if (!defaultClient) defaultClient = new OpenAI({ maxRetries: 1 });
   return defaultClient as unknown as VisionClient;
 }

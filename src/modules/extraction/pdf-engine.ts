@@ -32,6 +32,31 @@ interface VisionFigure {
   texto_na_figura: string;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Extrai o tempo de espera sugerido pela OpenAI ("...try again in 302ms."). */
+function parseRetryAfterMs(message: string): number | null {
+  const match = message.match(/try again in\s+([\d.]+)\s*(ms|s)\b/i);
+  if (!match) return null;
+  const value = Number(match[1]);
+  if (!Number.isFinite(value)) return null;
+  return match[2].toLowerCase() === "s" ? value * 1000 : value;
+}
+
+function isRateLimitError(error: unknown): boolean {
+  const status = (error as { status?: number } | null | undefined)?.status;
+  if (status === 429) return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /\b429\b|rate limit/i.test(message);
+}
+
+/** Espaço mínimo entre chamadas à Vision API — reduz a chance de estourar o TPM. */
+const VISION_MIN_GAP_MS = 350;
+/** Tentativas extras específicas para 429 (rate limit) — outros erros não são retentados. */
+const VISION_MAX_RETRIES = 3;
+
 let globalsPolyfilled = false;
 
 async function loadPdfjs() {
@@ -129,6 +154,33 @@ async function callVision(
   return parseVisionJson(raw);
 }
 
+/**
+ * Chama a Vision API com retentativa específica para erro 429 (rate limit).
+ * Em documentos com muitas páginas escaneadas em sequência é comum estourar
+ * o limite de tokens por minuto (TPM) da conta — sem retry, a página falha
+ * e perde texto/figuras definitivamente. Respeita o tempo sugerido pela
+ * própria OpenAI ("...try again in Xms.") quando presente.
+ */
+async function callVisionWithRetry(
+  client: VisionClient,
+  model: string,
+  temperature: number,
+  prompt: string,
+  pngDataUrl: string
+): Promise<{ texto?: string; figuras: VisionFigure[] }> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await callVision(client, model, temperature, prompt, pngDataUrl);
+    } catch (error) {
+      if (!isRateLimitError(error) || attempt >= VISION_MAX_RETRIES) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      const suggested = parseRetryAfterMs(message);
+      const backoff = suggested ?? Math.min(2_000 * 2 ** attempt, 20_000);
+      await sleep(backoff + 250); // pequena margem de segurança
+    }
+  }
+}
+
 export async function extractPdf(
   buffer: Buffer,
   config: OcrConfig,
@@ -190,6 +242,16 @@ export async function extractPdf(
   const ocrPages: number[] = [];
   const figures: FigureDraft[] = [];
   let cursor = 0;
+  let lastVisionCallAt = 0;
+
+  // Rede de segurança: com retentativas de 429, um documento com rate limit
+  // persistente em várias páginas poderia se aproximar do limite de execução
+  // da função serverless (route com maxDuration=300s) — perdendo TUDO num
+  // timeout, já que o resultado só é persistido no final do step. Ao atingir
+  // o orçamento, para de chamar a Vision API para as páginas restantes (que
+  // ficam com o texto puro do pdfjs, sem OCR) em vez de arriscar o timeout.
+  const ocrDeadline = Date.now() + 220_000;
+  let ocrBudgetExhausted = false;
 
   for (let pageNumber = 1; pageNumber <= pagesToProcess; pageNumber++) {
     let pageText = "";
@@ -206,8 +268,17 @@ export async function extractPdf(
         hasEmbeddedImage = opList.fnArray.includes(pdfjsLib.OPS.paintImageXObject);
       }
 
+      if (client && !ocrBudgetExhausted && Date.now() > ocrDeadline) {
+        ocrBudgetExhausted = true;
+        warnings.push(
+          `Orçamento de tempo do OCR/Vision atingido na página ${pageNumber} — páginas restantes ficam sem OCR/figuras nesta execução (reexecute a Extração para tentar novamente).`
+        );
+      }
+
       const needsRender =
-        client && (isScanned || (hasEmbeddedImage && figures.length < config.maxFigures));
+        client &&
+        !ocrBudgetExhausted &&
+        (isScanned || (hasEmbeddedImage && figures.length < config.maxFigures));
 
       if (needsRender && client) {
         try {
@@ -226,7 +297,12 @@ export async function extractPdf(
 
           const prompt = isScanned ? config.ocrPrompt : config.figuresPrompt;
           const model = config.model;
-          const result = await callVision(
+
+          const gap = VISION_MIN_GAP_MS - (Date.now() - lastVisionCallAt);
+          if (gap > 0) await sleep(gap);
+          lastVisionCallAt = Date.now();
+
+          const result = await callVisionWithRetry(
             client,
             model,
             config.temperature,
