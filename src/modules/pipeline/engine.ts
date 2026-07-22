@@ -202,13 +202,18 @@ async function stepExtraction(documentId: string, config: PipelineConfig) {
 
   let buffer: Buffer | undefined;
   if (document.storagePath) {
-    const { data: blob, error } = await getSupabaseAdmin()
-      .storage.from(UPLOAD_BUCKET)
-      .download(document.storagePath);
-    if (error || !blob) {
-      throw new Error(error?.message ?? "Falha ao baixar o arquivo original do storage.");
+    try {
+      const { data: blob, error } = await getSupabaseAdmin()
+        .storage.from(UPLOAD_BUCKET)
+        .download(document.storagePath);
+      if (error || !blob) {
+        throw new Error(error?.message ?? "Falha ao baixar o arquivo original do storage.");
+      }
+      buffer = Buffer.from(await blob.arrayBuffer());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`[storage-download] ${message}`);
     }
-    buffer = Buffer.from(await blob.arrayBuffer());
   } else if (document.originalContent) {
     buffer = Buffer.from(document.originalContent);
   }
