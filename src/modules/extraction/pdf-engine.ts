@@ -1,5 +1,4 @@
 import path from "node:path";
-import { createRequire } from "node:module";
 import type { OcrConfig } from "@/shared/config";
 import type { FigureDraft, PageOffset } from "@/shared/types";
 import {
@@ -17,8 +16,6 @@ import {
 // preservando a estrutura que o Tokenizador (Step 3) espera. Páginas sem
 // texto (digitalizadas) são transcritas via Vision API.
 // ---------------------------------------------------------------------------
-
-const require = createRequire(import.meta.url);
 
 export interface PdfExtractionResult {
   text: string;
@@ -144,7 +141,13 @@ export async function extractPdf(
   let pkgDir: string;
   try {
     ({ pdfjsLib, canvas } = await loadPdfjs());
-    pkgDir = path.dirname(require.resolve("pdfjs-dist/package.json"));
+    // Não usar require.resolve() aqui: dentro de código empacotado pelo
+    // webpack (rota do Next.js), require.resolve() de um pacote externalizado
+    // (serverExternalPackages) pode ser reescrito para devolver o ID interno
+    // do módulo (um número) em vez do caminho real em disco — daí o erro
+    // "The 'path' argument must be of type string. Received type number".
+    // pdfjs-dist está em node_modules por ser um external package de verdade.
+    pkgDir = path.join(process.cwd(), "node_modules", "pdfjs-dist");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`[setup] Falha ao carregar pdfjs-dist/@napi-rs/canvas: ${message}`);
